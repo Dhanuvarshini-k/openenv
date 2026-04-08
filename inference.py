@@ -1,71 +1,75 @@
-import os
 import json
-from openai import OpenAI
 
 from helpdesk_env.env import HelpdeskEnv
 from helpdesk_env.models import HelpdeskAction
 
-API_KEY = os.getenv("HF_TOKEN") or os.getenv("OPENAI_API_KEY")
-API_BASE_URL = os.getenv("API_BASE_URL") or "https://router.huggingface.co/v1"
-MODEL_NAME = os.getenv("MODEL_NAME") or "Qwen/Qwen2.5-72B-Instruct"
-
 MAX_STEPS = 10
-
-client = OpenAI(
-    api_key=API_KEY,
-    base_url=API_BASE_URL
-)
-
 TASKS = ["easy", "medium", "hard"]
 
 
 def llm_action(obs: dict):
-    prompt = f"""
-You are an AI agent in a customer support ticket triage environment.
+    state = obs.get("current_state", {})
+    message = obs.get("message", "").lower()
 
-You MUST respond with exactly ONE JSON object.
-No explanation. No extra text.
+    # 1. CATEGORY
+    if state.get("category") is None:
+        if any(x in message for x in ["charge", "refund", "invoice", "billing"]):
+            return {"action_type": "set_category", "value": "billing"}
+        elif any(x in message for x in ["crash", "error", "bug", "slow", "upload"]):
+            return {"action_type": "set_category", "value": "technical"}
+        elif any(x in message for x in ["login", "account", "password", "email"]):
+            return {"action_type": "set_category", "value": "account"}
+        elif any(x in message for x in ["delivery", "order", "package", "shipping"]):
+            return {"action_type": "set_category", "value": "shipping"}
+        elif any(x in message for x in ["otp", "hacked", "unauthorized", "security"]):
+            return {"action_type": "set_category", "value": "security"}
+        else:
+            return {"action_type": "set_category", "value": "technical"}
 
-Allowed action_type values:
-- set_category (value must be one of: billing, technical, account, shipping, security)
-- set_priority (value must be one of: low, medium, high)
-- assign_team (value must be one of: billing_team, tech_team, account_team, shipping_team, security_team)
-- send_reply (value must be a helpful reply)
-- resolve_ticket (value must be null)
-- request_info (value must be a short question)
-- noop (value must be null)
+    # 2. PRIORITY
+    if state.get("priority") is None:
+        if "urgent" in message or "immediately" in message:
+            return {"action_type": "set_priority", "value": "high"}
+        elif obs.get("customer_tier") == "premium":
+            return {"action_type": "set_priority", "value": "high"}
+        else:
+            return {"action_type": "set_priority", "value": "medium"}
 
-Strict decision rules (follow exactly):
-1. If current_state.category is null -> output set_category
-2. Else if current_state.priority is null -> output set_priority
-3. Else if current_state.team is null -> output assign_team
-4. Else if task_name == "hard" AND current_state.reply is empty -> output send_reply
-5. Else -> output resolve_ticket
+    # 3. TEAM
+    if state.get("team") is None:
+        mapping = {
+            "billing": "billing_team",
+            "technical": "tech_team",
+            "account": "account_team",
+            "shipping": "shipping_team",
+            "security": "security_team"
+        }
+        return {
+            "action_type": "assign_team",
+            "value": mapping.get(state.get("category"))
+        }
 
-Important:
-- Never output send_reply if current_state.reply is already filled.
-- resolve_ticket should be the final action.
+    # 4. HARD → SEND REPLY
+    if obs.get("task_name") == "hard" and state.get("reply") == "":
+        cat = state.get("category")
 
-Observation:
-{json.dumps(obs, indent=2)}
+        if cat == "technical":
+            reply = "Please update the app, reinstall it, and share crash logs."
+        elif cat == "billing":
+            reply = "We will review the charge and process a refund if needed."
+        elif cat == "shipping":
+            reply = "Please check tracking details and delivery status."
+        elif cat == "account":
+            reply = "Please reset your password and verify your login."
+        elif cat == "security":
+            reply = "Secure your account and report unauthorized activity immediately."
+        else:
+            reply = "We will assist you shortly."
 
-Return ONLY valid JSON.
-"""
+        return {"action_type": "send_reply", "value": reply}
 
-    resp = client.chat.completions.create(
-        model=MODEL_NAME,
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.1,
-        max_tokens=200
-    )
-
-    text = resp.choices[0].message.content.strip()
-
-    try:
-        parsed = json.loads(text)
-        return parsed
-    except Exception:
-        return {"action_type": "noop", "value": None}
+    # 5. RESOLVE
+    return {"action_type": "resolve_ticket", "value": None}
 
 
 def run_task(task_name: str):
@@ -76,7 +80,7 @@ def run_task(task_name: str):
     done = False
     steps = 0
 
-    print(f"[START] task={task_name} env=helpdesk_openenv model={MODEL_NAME}")
+    print(f"[START] task={task_name}")
 
     try:
         while not done and steps < MAX_STEPS:
@@ -95,25 +99,15 @@ def run_task(task_name: str):
             obs, reward, done, info = env.step(action)
             rewards.append(reward)
 
-            action_str = f"{action.action_type}({action.value})"
-            err = info.get("last_action_error")
-
-            if err is None:
-                err_out = "null"
-            else:
-                err_out = err
-
-            print(f"[STEP] step={steps} action={action_str} reward={reward:.2f} done={str(done).lower()} error={err_out}")
+            print(f"[STEP] step={steps} action={action.action_type}({action.value}) reward={reward:.2f}")
 
         score = float(env._compute_score())
         success = score >= 0.7
 
-        rewards_str = ",".join([f"{r:.2f}" for r in rewards])
-        print(f"[END] success={str(success).lower()} steps={steps} score={score:.2f} rewards={rewards_str}")
+        print(f"[END] success={success} steps={steps} score={score:.2f}")
 
     except Exception:
-        rewards_str = ",".join([f"{r:.2f}" for r in rewards])
-        print(f"[END] success=false steps={steps} score=0.00 rewards={rewards_str}")
+        print(f"[END] success=false steps={steps} score=0.00")
 
 
 if __name__ == "__main__":
