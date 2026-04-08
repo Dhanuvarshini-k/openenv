@@ -6,14 +6,6 @@ app = FastAPI()
 
 env = None
 
-@app.get("/")
-def root():
-    return {"status": "ok", "env": "helpdesk_openenv"}
-
-@app.get("/health")
-def health():
-    return {"status": "healthy"}
-
 
 @app.post("/reset")
 def reset(payload: dict = {}):   # 👈 THIS IS THE KEY FIX
