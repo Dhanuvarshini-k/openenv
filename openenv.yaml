@@ -1,0 +1,12 @@
+name: helpdesk_openenv
+version: 1.0.0
+entrypoint: helpdesk_env.env:HelpdeskEnv
+
+description: >
+  A real-world customer support ticket triage environment. The agent must classify,
+  route, and resolve helpdesk tickets with reward shaping.
+
+tasks:
+  - easy
+  - medium
+  - hard
