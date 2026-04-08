@@ -19,12 +19,10 @@ client = OpenAI(
 )
 
 
-# 🔒 STRONG FALLBACK (guaranteed correct behavior)
 def fallback_action(obs: dict):
     state = obs.get("current_state", {})
     message = obs.get("message", "").lower()
 
-    # CATEGORY
     if state.get("category") is None:
         if any(x in message for x in ["charge", "refund", "invoice", "billing"]):
             return {"action_type": "set_category", "value": "billing"}
@@ -39,13 +37,11 @@ def fallback_action(obs: dict):
         else:
             return {"action_type": "set_category", "value": "technical"}
 
-    # PRIORITY
     if state.get("priority") is None:
         if obs.get("customer_tier") == "premium":
             return {"action_type": "set_priority", "value": "high"}
         return {"action_type": "set_priority", "value": "medium"}
 
-    # TEAM
     if state.get("team") is None:
         mapping = {
             "billing": "billing_team",
@@ -59,10 +55,8 @@ def fallback_action(obs: dict):
             "value": mapping.get(state.get("category"))
         }
 
-    # HARD → SEND REPLY
     if obs.get("task_name") == "hard" and state.get("reply") == "":
         cat = state.get("category")
-
         if cat == "technical":
             reply = "Please update the app, reinstall it, and share crash logs for debugging."
         elif cat == "billing":
@@ -75,10 +69,10 @@ def fallback_action(obs: dict):
             reply = "Please secure your account immediately and report unauthorized activity."
         else:
             reply = "We will assist you shortly."
-
         return {"action_type": "send_reply", "value": reply}
 
-    # FINAL
+    if obs.get("task_name") in ["easy", "medium"]:
+        return {"action_type": "noop", "value": None}
     return {"action_type": "resolve_ticket", "value": None}
 
 
@@ -117,17 +111,12 @@ Observation:
         )
 
         text = resp.choices[0].message.content.strip()
-
-        # clean markdown if present
         text = text.replace("```json", "").replace("```", "").strip()
-
         parsed = json.loads(text)
 
-        # ❗ ensure structure
         if "action_type" not in parsed:
             return fallback_action(obs)
 
-        # ❗ FIX: prevent empty reply
         if parsed["action_type"] == "send_reply":
             if not parsed.get("value") or len(parsed.get("value").strip()) < 10:
                 return fallback_action(obs)
@@ -167,12 +156,13 @@ def run_task(task_name: str):
 
             print(f"[STEP] {steps} → {action.action_type}({action.value}) reward={reward:.2f}")
 
-            time.sleep(0.5)  # avoid rate limits
+            time.sleep(0.5)
 
         score = float(env._compute_score())
+        score = max(0.001, min(0.999, score))  # ✅ FIX: keep strictly within (0, 1)
         success = score >= 0.7
 
-        print(f"[END] success={success} score={score:.2f}")
+        print(f"[END] success={success} score={score:.3f}")
 
     except Exception:
         print(f"[END] success=false score=0.00")
