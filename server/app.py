@@ -10,15 +10,6 @@ env = HelpdeskEnv(task_name="easy", seed=42)
 current_obs = env.reset()
 
 
-@app.get("/")
-def root():
-    return {"status": "ok", "env": "helpdesk_openenv"}
-
-
-@app.get("/health")
-def health():
-    return {"status": "healthy"}
-
 # ✅ RESET (GET)
 @app.get("/reset")
 def reset_get():
