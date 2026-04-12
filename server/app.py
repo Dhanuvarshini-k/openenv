@@ -1,28 +1,63 @@
-from fastapi import FastAPI
-import subprocess
-import sys
+from fastapi import FastAPI, Body
+from helpdesk_env.env import HelpdeskEnv
+from helpdesk_env.models import HelpdeskAction
 
-app = FastAPI()
+app = FastAPI(
+    title="Helpdesk OpenEnv",
+    description="OpenEnv-compatible environment for customer support ticket triage and resolution.",
+    version="1.0.0",
+)
+
+env = None
+current_obs = None
+
 
 @app.get("/")
 def root():
-    return {"status": "ok"}
+    return {"status": "ok", "env": "helpdesk_openenv"}
 
-@app.get("/run")
-def run():
-    import subprocess, sys
-    result = subprocess.run(
-        [sys.executable, "inference.py"],
-        capture_output=True,
-        text=True
-    )
+
+@app.get("/health")
+def health():
+    return {"status": "healthy"}
+
+
+@app.post("/reset")
+def reset(payload: dict = Body(default={})):
+    global env, current_obs
+    task_name = payload.get("task_name", "easy")
+    seed = payload.get("seed", 42)
+
+    env = HelpdeskEnv(task_name=task_name, seed=seed)
+    current_obs = env.reset()
+
+    return {"observation": current_obs.model_dump()}
+
+
+@app.post("/step")
+def step(payload: dict = Body(default={})):
+    global current_obs
+
+    if env is None:
+        return {"error": "Call /reset first"}
+
+    action_data = payload.get("action", {"action_type": "noop", "value": None})
+    action = HelpdeskAction(**action_data)
+
+    obs, reward, done, info = env.step(action)
+    current_obs = obs
+
     return {
-        "stdout": result.stdout,
-        "stderr": result.stderr
+        "observation": obs.model_dump(),
+        "reward": reward,
+        "done": done,
+        "info": info,
     }
+
+
 def main():
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=7860)
+    uvicorn.run("server.app:app", host="0.0.0.0", port=7860)
 
 
 if __name__ == "__main__":
