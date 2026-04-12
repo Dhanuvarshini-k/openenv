@@ -1,0 +1,19 @@
+[project]
+name = "helpdesk_openenv"
+version = "1.0.0"
+description = "A real-world OpenEnv benchmark for customer support ticket triage and resolution"
+requires-python = ">=3.10"
+dependencies = [
+    "pydantic",
+    "openai",
+    "openenv-core",
+    "fastapi",
+    "uvicorn"
+]
+
+[project.scripts]
+server = "server.app:main"
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
